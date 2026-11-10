@@ -57,14 +57,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # 同步 Docker Hub 页面简介与 Overview（镜像推上去之后仓库才存在）
-      - name: Update Docker Hub description
-        continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: opcoderen/redactly
-          short-description: "Browser-only image redaction: OCR, face detection and masking stay in the browser."
-          readme-filepath: ./DOCKERHUB.md

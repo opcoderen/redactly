@@ -119,7 +119,7 @@ npm run build -- --out ~/Desktop/redactly.html
 - [PRIVACY.md](PRIVACY.md) — 数据流向
 - [SECURITY.md](SECURITY.md) — 漏洞反馈
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 第三方组件与许可证
-- [DOCKERHUB.md](DOCKERHUB.md) — 镜像商店页的说明，随镜像构建自动同步过去
+- [DOCKERHUB.md](DOCKERHUB.md) — 镜像商店页的说明文案，改完手动粘到 Docker Hub
 
 代码以 [MIT](LICENSE) 发布。「隐码 / Redactly」的名称和 Logo 未授权用于衍生分发，代码本身不受限制。
 
