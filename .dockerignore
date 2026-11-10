@@ -7,6 +7,14 @@ standalone
 *.md
 !README.md
 .DS_Store
+**/.DS_Store
 dama.html
+# 本地文件不进构建上下文（避免被打进镜像层）
+.workbuddy
+.claude
+.cursor
+AGENT_HANDOFF.md
+*.local.md
+*.log
 # 依赖在构建阶段由 scripts/fetch-vendor.mjs 拉取，不进构建上下文（省 41MB）
 public/vendor
