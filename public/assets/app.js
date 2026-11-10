@@ -1471,7 +1471,7 @@ const $ = (id) => document.getElementById(id);
       sheetMask.classList.add("hidden");
     }
 
-    ["badgePrivacy", "badgeDeploy", "hintPrivacy", "hintDeploy"].forEach((id) => {
+    ["badgePrivacy", "badgeDeploy"].forEach((id) => {
       const el = $(id);
       if (!el) return;
       // 空状态整块是"点哪都能上传"，按钮必须掐断冒泡，否则会弹出文件选择框

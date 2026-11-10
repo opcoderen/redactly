@@ -52,7 +52,7 @@ docker run -d -p 8080:80 --name redactly opcoderen/redactly
 
 纯静态项目套一层 Docker，看着是多余的动作。这个镜像面向的是另一类场景：单位不允许访问外部网站，又需要给证件、票据打码。内网里要的不是又一个网址，而是能装在自己机器上跑起来的东西。
 
-镜像在 GitHub Actions 上构建，本机不装 Docker 也能出镜像。推到 `main` 产出 `edge` 标签，打 `v1.0.0` 这样的 tag 产出 `1.0.0` / `1.0` / `latest`，两个架构（amd64、arm64）一起推 Docker Hub 和 ghcr.io。
+镜像在 GitHub Actions 上构建，本机不装 Docker 也能出镜像。推到 `main` 产出 `edge` 标签，打 `v0.1.0` 这样的 tag 产出 `0.1.0` / `0.1` / `latest`，两个架构（amd64、arm64）一起推 Docker Hub 和 ghcr.io。
 
 ### 部署到 Cloudflare Pages
 

@@ -24,7 +24,7 @@
   }
   header {
     padding: 12px 24px;
-    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   }
   .logo { font-size: 20px; font-weight: 800; color: var(--accent); letter-spacing: 2px; }
   .logo-sub { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 4px; letter-spacing: 1px; }
@@ -269,16 +269,6 @@
   .gh:hover { color: #fff; border-color: var(--accent); background: #24304a; transform: translateY(-1px); }
   .gh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* ---------- 空状态里的小链接 ---------- */
-  .hintline { margin-top: 12px; font-size: 12px; color: var(--muted); }
-  .linkbtn {
-    background: none; border: none; padding: 0 1px; font: inherit;
-    color: var(--accent); cursor: pointer;
-    text-decoration: underline; text-underline-offset: 3px;
-  }
-  .linkbtn:hover { color: #7fb0ff; }
-  .hintline .sep { margin: 0 7px; opacity: 0.45; }
-
   /* ---------- 隐私 & 部署面板 ---------- */
   .sheet-mask { position: fixed; inset: 0; background: rgba(6, 10, 18, 0.62); z-index: 60; }
   .sheet {
@@ -350,11 +340,6 @@
       <div id="emptyHint">
         <div class="big">拖拽 / 粘贴 / 点击上传图片</div>
         <div>支持截图、照片、PDF、HEIC · 全程本地处理</div>
-        <div class="hintline">
-          <button class="linkbtn" id="hintPrivacy" type="button">隐私说明</button>
-          <span class="sep">·</span>
-          <button class="linkbtn" id="hintDeploy" type="button">自行部署</button>
-        </div>
       </div>
       <div id="zoomUI" class="hidden">
         <span id="zoomVal">1.0x</span>
@@ -2027,7 +2012,7 @@ const $ = (id) => document.getElementById(id);
       sheetMask.classList.add("hidden");
     }
 
-    ["badgePrivacy", "badgeDeploy", "hintPrivacy", "hintDeploy"].forEach((id) => {
+    ["badgePrivacy", "badgeDeploy"].forEach((id) => {
       const el = $(id);
       if (!el) return;
       // 空状态整块是"点哪都能上传"，按钮必须掐断冒泡，否则会弹出文件选择框
