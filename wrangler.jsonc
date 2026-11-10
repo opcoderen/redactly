@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers Builds 的 "npx wrangler deploy" 依赖本文件
+  // 纯静态站，没有 Worker 脚本，只挂 assets
+  "name": "redactly",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public"
+  }
+}
