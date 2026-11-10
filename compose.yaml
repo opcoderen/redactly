@@ -1,0 +1,21 @@
+services:
+  redactly:
+    image: opcoderen/redactly:latest
+    container_name: redactly
+    # 改成你想要的端口：左边是宿主机
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    # 容器内只需要读文件，不给任何写权限
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 4s
+      retries: 3

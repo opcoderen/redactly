@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 隐私是硬约束：浏览器层面禁止任何外发请求。页面只允许同源资源。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="description" content="在浏览器本地给图片打码：自动识别手机号、身份证、银行卡、发票号、姓名与人脸，图片不上传，支持离线自托管。">
+  <meta name="theme-color" content="#0f1420">
+  <title>隐码 Redactly — 图片敏感信息自动打码（纯本地 · 不上传）</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%234f8ef7'/%3E%3Crect x='18' y='18' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.95'/%3E%3Crect x='52' y='18' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.7'/%3E%3Crect x='18' y='52' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.7'/%3E%3Crect x='52' y='52' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.45'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+  <header>
+    <div class="logo">隐码<span class="logo-sub">REDACTLY</span></div>
+    <div class="tagline">图片敏感信息自动打码</div>
+    <div class="badges">
+      <button class="badge" id="badgePrivacy" type="button">
+        <span class="dot"></span>纯本地处理 · 不上传
+      </button>
+      <button class="badge" id="badgeDeploy" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 19a4.5 4.5 0 0 1-.7-8.95A6 6 0 0 1 17.5 9.6A4 4 0 0 1 17 19H6.5Z"/></svg>
+        可部署在 Cloudflare Pages
+      </button>
+    </div>
+    <!-- 仓库地址：https://github.com/opcoderen/redactly -->
+    <a class="gh" href="https://github.com/opcoderen/redactly" target="_blank" rel="noopener noreferrer"
+       aria-label="GitHub 仓库" title="GitHub 仓库">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+  </header>
+
+  <main>
+    <section id="stage">
+      <input type="file" id="fileInput" accept="image/*,.pdf,.heic,.heif" hidden>
+      <canvas id="cv"></canvas>
+      <div id="emptyHint">
+        <div class="big">拖拽 / 粘贴 / 点击上传图片</div>
+        <div>支持截图、照片、PDF、HEIC · 全程本地处理</div>
+        <div class="hintline">
+          <button class="linkbtn" id="hintPrivacy" type="button">隐私说明</button>
+          <span class="sep">·</span>
+          <button class="linkbtn" id="hintDeploy" type="button">自行部署</button>
+        </div>
+      </div>
+      <div id="zoomUI" class="hidden">
+        <span id="zoomVal">1.0x</span>
+        <button id="zoomReset" type="button">重置</button>
+      </div>
+      <div id="toolbar">
+        <div class="tb-group" id="tbTools">
+          <button class="tb-btn" data-tool="solid">色块</button>
+          <button class="tb-btn" data-tool="mosaic">马赛克</button>
+          <button class="tb-btn" data-tool="blur">模糊</button>
+          <button class="tb-btn" data-tool="inpaint">隐藏</button>
+          <button class="tb-btn" data-tool="brush">画笔</button>
+          <button class="tb-btn" data-tool="emoji">笑脸</button>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbParams">
+          <div class="tp hidden" data-p="color">
+            <input type="color" id="solidColor" value="#111111" title="颜色">
+          </div>
+          <div class="tp hidden" data-p="pixelSize">
+            <span class="tp-label">强度</span>
+            <input type="range" id="pixelSize" min="6" max="40" value="14">
+            <span class="tp-val" id="pixelVal">14</span>
+          </div>
+          <div class="tp hidden" data-p="blurRadius">
+            <span class="tp-label">半径</span>
+            <input type="range" id="blurRadius" min="4" max="30" value="10">
+            <span class="tp-val" id="blurVal">10</span>
+          </div>
+          <div class="tp hidden" data-p="brushSize">
+            <span class="tp-label">笔粗</span>
+            <input type="range" id="brushSize" min="4" max="40" value="12">
+            <span class="tp-val" id="brushSizeVal">12</span>
+          </div>
+          <div class="tp hidden" data-p="emojiSize">
+            <span class="tp-label">大小</span>
+            <input type="range" id="emojiSize" min="40" max="800" value="120">
+            <span class="tp-val" id="emojiSizeVal">120</span>
+          </div>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbEdit">
+          <span id="tbSelInfo"></span>
+          <button id="tbDelete" class="tb-btn danger">删除</button>
+          <button id="tbDone" class="tb-btn">完成</button>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbActions">
+          <span id="pdfNav" class="hidden" style="display:flex;align-items:center;gap:4px;">
+            <button id="pgPrev" class="tb-btn">‹</button>
+            <span id="pgInfo" style="font-size:12px;color:var(--muted);white-space:nowrap;"></span>
+            <button id="pgNext" class="tb-btn">›</button>
+          </span>
+          <button id="tbRun" class="tb-btn accent" disabled>识别</button>
+          <button id="tbResults" class="tb-btn">结果</button>
+          <button id="tbUndo" class="tb-btn" disabled>撤销</button>
+          <button id="tbExport" class="tb-btn accent" disabled>导出</button>
+          <button id="tbPick" class="tb-btn">换图</button>
+          <button id="tbHelp" class="tb-btn">?</button>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="popover" id="popResults">
+          <div class="pop-head">
+            <strong>检测结果 <span id="detCount"></span></strong>
+            <span class="pop-actions">
+              <button id="checkAll" class="btn">全选</button>
+              <button id="uncheckAll" class="btn">全不选</button>
+            </span>
+          </div>
+          <ul id="detList"></ul>
+          <p class="hint" id="noDet">点「识别」后这里会列出命中的敏感信息与人脸，取消勾选即还原原文。</p>
+        </div>
+
+        <div class="popover" id="popHelp">
+          <strong>怎么用</strong>
+          <p class="hint">
+            <b>打码</b>：选工具（色块/马赛克/模糊/隐藏/画笔），在空白处拖拽即生成块；参数在工具条上调。<br>
+            <b>编辑</b>：点任意块选中 → 拖动移动、拉四角缩放、工具条「删除」；选中后换工具或调参数 = 改这个块的样式。<br>
+            <b>自动识别</b>：点「识别」自动找手机号/身份证/座机/邮箱/银行卡/发票号/统一社会信用代码/客票号/金额/日期/机读码/车牌，以及人脸（自动盖笑脸）。<br>
+            <b>单据/证件场景</b>：认出「门诊号 / 病历号 / 发票号 / 客票号 / 电话」等标签后，自动打它右边或下方的值；「姓名」标签后的中文名或拼音（登机牌 ZHANG SAN）也会打。<br>
+            <b>手势</b>：双击文字行 = 整行打码（再双击还原）；右键 = 精确到字。<br>
+            <b>「完成」是提交键</b>：画完一个块 / 放完笑脸后会自动选中并进入编辑态，此时只能编辑这一个对象（拖动、拉角、滑块、换工具改样式），想加新东西必须先点「完成」（或「删除」，或轻点空白 = 取消选中，Esc 同样可提交）。<br>
+            <b>笑脸</b>：选「笑脸」工具 → 点画布放置 → 拖动移位置 → 工具条「大小」滑块调尺寸 → 双击删除 → 点「完成」退出。选中时气泡会提示当前选中的是什么。<br>
+            <b>隐私</b>：所有处理均在浏览器本地完成，图片不会上传。支持常见图片 / HEIC（iPhone）/ PDF（按页处理）；高清大图自动降采样识别。<br>
+            <b>部署</b>：这是纯静态页面，可直接放到 Cloudflare Pages，也可用 Docker 在内网私有化运行。点顶部「可部署在 Cloudflare Pages」看命令。
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 隐私 & 部署：独立面板，不用先上传图片也能看 -->
+  <div id="privacyMask" class="sheet-mask hidden"></div>
+  <div id="privacyPop" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+    <div class="pop-head">
+      <strong id="ppTitle">隐私 &amp; 部署</strong>
+      <button class="btn" id="ppClose" type="button">关闭</button>
+    </div>
+
+    <div class="pp-sec">
+      <h4><span class="dot"></span>图片从不离开这台设备</h4>
+      <ul>
+        <li>文字识别（OCR）跑在浏览器内的 WebAssembly 引擎上，模型文件随页面一起下发。</li>
+        <li>人脸检测用本地权重，不调用任何云端接口。</li>
+        <li>打码和导出走 Canvas，导出的 PNG 直接由浏览器保存，不经过服务器。</li>
+        <li>整站没有后端、没有数据库、没有埋点，也没有任何 <code>fetch</code> 到第三方的代码。</li>
+      </ul>
+    </div>
+
+    <div class="pp-sec">
+      <h4><span class="dot"></span>30 秒自己验证</h4>
+      <p>打开开发者工具 → Network → 上传一张图片 → 点「识别」。除了同源的模型文件，不会出现任何外发请求。页面的 CSP 里写死了 <code>connect-src 'self'</code>，浏览器会直接拦掉越界的请求，这一点不用信我们怎么说。</p>
+    </div>
+
+    <div class="pp-sec">
+      <h4><span class="dot"></span>自己部署</h4>
+      <p class="pp-sub">Docker（内网 / 私有化 / 断网可用）</p>
+      <pre><code>docker run -d -p 8080:80 opcoderen/redactly</code></pre>
+      <p class="pp-sub">Cloudflare Pages（免费、全球 CDN）</p>
+      <p>Fork 仓库 → Pages 连接 GitHub → 构建命令填 <code>node scripts/fetch-vendor.mjs</code>、输出目录填 <code>public</code>。纯静态，无需环境变量和后端。</p>
+      <p class="pp-note">模型文件较大（约 40MB），首次识别会慢几秒，之后走浏览器缓存。</p>
+    </div>
+  </div>
+
+  <script src="vendor/tesseract/tesseract.min.js" defer></script>
+  <script src="assets/rules.js" defer></script>
+  <script src="assets/app.js" defer></script>
+</body>
+</html>

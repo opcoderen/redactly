@@ -1,0 +1,71 @@
+name: docker
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io 只接受小写镜像名，仓库名里有大写会直接报错
+      - id: img
+        run: echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # Docker Hub：Secrets 里要配 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN（token 需 Read & Write）
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # push 到 main 出 edge 标签，打 v1.0.0 这种 tag 出 1.0.0 / 1.0 / latest
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            opcoderen/redactly
+            ${{ steps.img.outputs.ghcr }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 同步 Docker Hub 页面简介，失败不影响镜像推送
+      - name: Update Docker Hub description
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: opcoderen/redactly
+          short-description: "Redact sensitive info in images, entirely in your browser. 纯本地图片打码"
+          readme-filepath: ./README.en.md

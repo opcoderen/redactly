@@ -1,0 +1,12 @@
+.git
+.github
+.gitignore
+.dockerignore
+node_modules
+standalone
+*.md
+!README.md
+.DS_Store
+dama.html
+# 依赖在构建阶段由 scripts/fetch-vendor.mjs 拉取，不进构建上下文（省 41MB）
+public/vendor

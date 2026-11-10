@@ -1,0 +1,1743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>隐码 Mask - 图片敏感信息自动打码</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%234f8ef7'/%3E%3Crect x='18' y='18' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.95'/%3E%3Crect x='52' y='18' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.7'/%3E%3Crect x='18' y='52' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.7'/%3E%3Crect x='52' y='52' width='30' height='30' rx='6' fill='%23ffffff' opacity='0.45'/%3E%3C/svg%3E">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1420; --border: #26324a;
+      --text: #e8edf6; --muted: #8d9ab3;
+      --accent: #4f8ef7; --accent-soft: rgba(79, 142, 247, 0.15);
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column;
+    }
+    header {
+      padding: 12px 24px;
+      display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    }
+    .logo { font-size: 20px; font-weight: 800; color: var(--accent); letter-spacing: 2px; }
+    .logo-sub { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 4px; letter-spacing: 1px; }
+    .tagline { font-size: 12px; color: var(--muted); }
+
+    main { flex: 1; display: flex; overflow: hidden; }
+
+    /* ---------- 画布舞台 ---------- */
+    #stage {
+      flex: 1; position: relative; overflow: hidden;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 14px 20px 104px;
+    }
+    #cv {
+      max-width: 100%; max-height: 100%; border-radius: 8px;
+      cursor: crosshair; display: none;
+      box-shadow: 0 0 0 1px var(--border);
+      touch-action: none;
+      will-change: transform;
+    }
+    /* 缩放指示 + 重置（放大 >1x 时出现） */
+    #zoomUI {
+      position: absolute; top: 18px; right: 26px; z-index: 15;
+      display: flex; gap: 6px; align-items: center;
+      background: #1c2536; border: 1px solid var(--border); border-radius: 999px;
+      padding: 4px 6px 4px 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    #zoomVal { font-size: 12px; color: var(--accent); font-weight: 600; min-width: 30px; text-align: center; }
+    #zoomReset {
+      background: #24304a; color: var(--text); border: 1px solid var(--border);
+      border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+    }
+    #emptyHint {
+      color: var(--muted); font-size: 14px; text-align: center; cursor: pointer;
+      border: 1.5px dashed var(--border); border-radius: 12px;
+      padding: 44px 36px; transition: border-color 0.15s;
+    }
+    #emptyHint:hover { border-color: var(--accent); color: var(--text); }
+    #emptyHint .big { font-size: 15px; color: var(--text); margin-bottom: 8px; font-weight: 600; }
+    #emptyHint.dragover { border-color: var(--accent); background: var(--accent-soft); }
+
+    /* ---------- 浮动工具条（唯一入口） ---------- */
+    #toolbar {
+      display: none; position: absolute; bottom: 14px; left: 50%;
+      transform: translateX(-50%);
+      background: #1c2536; border: 1px solid var(--border); border-radius: 12px;
+      padding: 8px 10px; gap: 6px; align-items: center;
+      z-index: 10; max-width: calc(100% - 20px); flex-wrap: nowrap; justify-content: center;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    #toolbar.show { display: flex; }
+    .tb-group { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; justify-content: center; }
+    .tb-btn {
+      background: #24304a; color: var(--muted); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 11px; font-size: 12px; cursor: pointer; white-space: nowrap;
+    }
+    .tb-btn:hover { background: #2d3a56; }
+    .tb-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .tb-btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .tb-btn.accent:hover { background: #66a0f8; }
+    .tb-btn.danger { background: #3a1d2a; border-color: #6e3a4d; color: #ff8ba0; }
+    #tbEdit { display: none; align-items: center; gap: 6px; }
+    #tbEdit.show { display: flex; }
+    #tbSelInfo { font-size: 12px; color: var(--accent); font-weight: 600; padding: 0 2px; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    .tb-sep { width: 1px; height: 22px; background: var(--border); }
+
+    /* 工具条内联参数 */
+    .tp { display: flex; align-items: center; gap: 6px; }
+    .tp.hidden { display: none; }
+    .hidden { display: none !important; }
+    .tp-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .tp-val { font-size: 11px; color: var(--accent); min-width: 22px; text-align: right; }
+    .tp input[type="color"] { width: 34px; height: 28px; border: none; background: none; cursor: pointer; padding: 0; }
+    /* 自定义滑块：默认的原生滑轨太细（一根细线）看不清、难点中，全部重画 */
+    .tp input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 92px; height: 28px; background: none; cursor: pointer; margin: 0;
+    }
+    .tp input[type="range"]::-webkit-slider-runnable-track {
+      height: 8px; border-radius: 4px;
+      background: #2a3548;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+    .tp input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 20px; height: 20px; margin-top: -6px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 3px solid #eef3fb;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+    }
+    .tp input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.12); background: #6ba4ff; }
+    .tp input[type="range"]::-moz-range-track {
+      height: 8px; border-radius: 4px;
+      background: #2a3548;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+    .tp input[type="range"]::-moz-range-thumb {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 3px solid #eef3fb;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+    }
+    .tp input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+    /* 状态气泡（识别进度等） */
+    #status {
+      position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+      background: #1c2536; border: 1px solid var(--border); border-radius: 999px;
+      padding: 5px 14px; font-size: 12px; color: var(--muted); white-space: nowrap;
+      display: none; max-width: 78vw; overflow: hidden; text-overflow: ellipsis;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    #status.show { display: block; }
+
+    /* 工具条弹出气泡（检测结果 / 帮助） */
+    .popover {
+      display: none; position: absolute; bottom: calc(100% + 10px); right: 0;
+      width: 320px; max-width: calc(100vw - 32px); max-height: 48vh; overflow-y: auto;
+      background: #1c2536; border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px; text-align: left; z-index: 20;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .popover.show { display: block; }
+    .popover strong { font-size: 13px; color: var(--text); }
+    .pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .pop-actions { display: flex; gap: 6px; }
+    .popover .hint { line-height: 1.8; }
+    .popover .hint b { color: var(--text); font-weight: 600; }
+
+    .btn {
+      background: #24304a; color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+    }
+    .btn:hover:not(:disabled) { background: #2d3a56; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.7; }
+
+    #detList { list-style: none; margin-top: 8px; }
+    #detList li {
+      display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+      border-radius: 8px; font-size: 13px; cursor: pointer; user-select: none;
+    }
+    #detList li:hover { background: #24304a; }
+    #detList li.off { opacity: 0.45; }
+    #detList li .badge {
+      font-size: 10px; padding: 2px 7px; border-radius: 999px;
+      background: var(--accent-soft); color: var(--accent); flex-shrink: 0; font-weight: 600;
+    }
+    #detList li .txt { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #detList li .txt.hit { color: var(--text); font-weight: 600; }
+    #detList input { accent-color: var(--accent); }
+
+    /* ---------- 手机端 ---------- */
+    @media (max-width: 768px) {
+      body { height: auto; min-height: 100%; }
+      header { padding: 12px 16px; }
+      .tagline { width: 100%; }
+      main { flex-direction: column; overflow: visible; }
+      #stage { order: -1; padding: 10px 12px 12px; }
+      #cv { max-height: 56vh; }
+      #zoomUI { top: 14px; right: 16px; }
+      /* 工具条：三行卡片式（工具 / 参数或编辑条 / 操作），不悬浮遮挡图片 */
+      #toolbar {
+        position: relative; bottom: auto; left: auto; transform: none;
+        width: 100%; max-width: none; margin-top: 10px;
+        flex-direction: column; align-items: stretch; gap: 8px;
+        padding: 0; flex-wrap: nowrap; justify-content: flex-start;
+        background: transparent; border: none; box-shadow: none;
+      }
+      .tb-sep { display: none; }
+      .tb-group { flex-wrap: nowrap; justify-content: flex-start; min-width: 0; }
+      /* 行1 · 工具：分段式 chips，横向滑动，无框幽灵态 */
+      #tbTools {
+        background: #1c2536; border: 1px solid var(--border); border-radius: 14px;
+        padding: 6px; gap: 4px; overflow-x: auto; scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      #tbTools::-webkit-scrollbar { display: none; }
+      #tbTools .tb-btn {
+        flex: 0 0 auto; min-height: 42px; padding: 8px 18px; font-size: 14px;
+        background: transparent; border: none; color: var(--muted); border-radius: 10px;
+      }
+      #tbTools .tb-btn.active { background: var(--accent); color: #fff; font-weight: 600; }
+      /* 行2 · 参数（当前工具）；块被选中时整行让位给编辑条 */
+      #tbParams {
+        background: #1c2536; border: 1px solid var(--border); border-radius: 14px;
+        padding: 10px 14px; margin-top: 0; min-height: 52px; align-items: center;
+      }
+      #toolbar:has(#tbEdit.show) #tbParams { display: none; }
+      .tp input[type="range"] { flex: 1; min-width: 90px; width: auto; }
+      .tp input[type="color"] { width: 40px; height: 34px; }
+      /* 行2（选中态）· 编辑条：蓝色调，一眼可见 */
+      #tbEdit.show {
+        background: rgba(79, 142, 247, 0.12); border: 1px solid var(--accent);
+        border-radius: 14px; padding: 8px 12px; min-height: 52px;
+      }
+      #tbSelInfo { flex: 1; }
+      #tbEdit .tb-btn { min-height: 38px; padding: 8px 18px; }
+      /* 行3 · 操作：识别/导出为主按钮（实心蓝），其余常规卡片 */
+      #tbActions { gap: 8px; }
+      #tbActions .tb-btn {
+        flex: 1 1 0; min-width: 0; text-align: center; white-space: nowrap;
+        min-height: 46px; padding: 10px 4px; font-size: 14px;
+        background: #1c2536; border: 1px solid var(--border); color: var(--text);
+        border-radius: 12px;
+      }
+      #tbActions .tb-btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+      #tbActions .tb-btn:disabled { opacity: 0.45; }
+      .popover { width: calc(100vw - 24px); max-width: none; right: 0; }
+      #emptyHint { width: 100%; }
+      .sec { padding: 14px 0 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">隐码<span class="logo-sub">MASK</span></div>
+    <div class="tagline">图片敏感信息自动打码 · 纯浏览器本地处理，图片不上传</div>
+  </header>
+
+  <main>
+    <section id="stage">
+      <input type="file" id="fileInput" accept="image/*,.pdf,.heic,.heif" hidden>
+      <canvas id="cv"></canvas>
+      <div id="emptyHint">
+        <div class="big">拖拽 / 粘贴 / 点击上传图片</div>
+        <div>支持截图、照片 · 全程本地处理</div>
+      </div>
+      <div id="zoomUI" class="hidden">
+        <span id="zoomVal">1.0x</span>
+        <button id="zoomReset" type="button">重置</button>
+      </div>
+      <div id="toolbar">
+        <div class="tb-group" id="tbTools">
+          <button class="tb-btn" data-tool="solid">色块</button>
+          <button class="tb-btn" data-tool="mosaic">马赛克</button>
+          <button class="tb-btn" data-tool="blur">模糊</button>
+          <button class="tb-btn" data-tool="inpaint">隐藏</button>
+          <button class="tb-btn" data-tool="brush">画笔</button>
+          <button class="tb-btn" data-tool="emoji">笑脸</button>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbParams">
+          <div class="tp hidden" data-p="color">
+            <input type="color" id="solidColor" value="#111111" title="颜色">
+          </div>
+          <div class="tp hidden" data-p="pixelSize">
+            <span class="tp-label">强度</span>
+            <input type="range" id="pixelSize" min="6" max="40" value="14">
+            <span class="tp-val" id="pixelVal">14</span>
+          </div>
+          <div class="tp hidden" data-p="blurRadius">
+            <span class="tp-label">半径</span>
+            <input type="range" id="blurRadius" min="4" max="30" value="10">
+            <span class="tp-val" id="blurVal">10</span>
+          </div>
+          <div class="tp hidden" data-p="brushSize">
+            <span class="tp-label">笔粗</span>
+            <input type="range" id="brushSize" min="4" max="40" value="12">
+            <span class="tp-val" id="brushSizeVal">12</span>
+          </div>
+          <div class="tp hidden" data-p="emojiSize">
+            <span class="tp-label">大小</span>
+            <input type="range" id="emojiSize" min="40" max="800" value="120">
+            <span class="tp-val" id="emojiSizeVal">120</span>
+          </div>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbEdit">
+          <span id="tbSelInfo"></span>
+          <button id="tbDelete" class="tb-btn danger">删除</button>
+          <button id="tbDone" class="tb-btn">完成</button>
+        </div>
+        <div class="tb-sep"></div>
+        <div class="tb-group" id="tbActions">
+          <span id="pdfNav" class="hidden" style="display:flex;align-items:center;gap:4px;">
+            <button id="pgPrev" class="tb-btn">‹</button>
+            <span id="pgInfo" style="font-size:12px;color:var(--muted);white-space:nowrap;"></span>
+            <button id="pgNext" class="tb-btn">›</button>
+          </span>
+          <button id="tbRun" class="tb-btn accent" disabled>识别</button>
+          <button id="tbResults" class="tb-btn">结果</button>
+          <button id="tbUndo" class="tb-btn" disabled>撤销</button>
+          <button id="tbExport" class="tb-btn accent" disabled>导出</button>
+          <button id="tbPick" class="tb-btn">换图</button>
+          <button id="tbHelp" class="tb-btn">?</button>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="popover" id="popResults">
+          <div class="pop-head">
+            <strong>检测结果 <span id="detCount"></span></strong>
+            <span class="pop-actions">
+              <button id="checkAll" class="btn">全选</button>
+              <button id="uncheckAll" class="btn">全不选</button>
+            </span>
+          </div>
+          <ul id="detList"></ul>
+          <p class="hint" id="noDet">点「识别」后这里会列出命中的敏感信息与人脸，取消勾选即还原原文。</p>
+        </div>
+
+        <div class="popover" id="popHelp">
+          <strong>怎么用</strong>
+          <p class="hint">
+            <b>打码</b>：选工具（色块/马赛克/模糊/隐藏/画笔），在空白处拖拽即生成块；参数在工具条上调。<br>
+            <b>编辑</b>：点任意块选中 → 拖动移动、拉四角缩放、工具条「删除」；选中后换工具或调参数 = 改这个块的样式。<br>
+            <b>自动识别</b>：点「识别」自动找手机号/身份证/座机/邮箱/银行卡/发票号/统一社会信用代码/客票号/金额/日期/机读码/车牌，以及人脸（自动盖笑脸）。<br>
+            <b>单据/证件场景</b>：认出「门诊号 / 病历号 / 发票号 / 客票号 / 电话」等标签后，自动打它右边或下方的值；「姓名」标签后的中文名或拼音（登机牌 ZHANG SAN）也会打。<br>
+            <b>手势</b>：双击文字行 = 整行打码（再双击还原）；右键 = 精确到字。<br>
+            <b>「完成」是提交键</b>：画完一个块 / 放完笑脸后会自动选中并进入编辑态，此时只能编辑这一个对象（拖动、拉角、滑块、换工具改样式），想加新东西必须先点「完成」（或「删除」，或轻点空白 = 取消选中，Esc 同样可提交）。<br>
+            <b>笑脸</b>：选「笑脸」工具 → 点画布放置 → 拖动移位置 → 工具条「大小」滑块调尺寸 → 双击删除 → 点「完成」退出。选中时气泡会提示当前选中的是什么。<br>
+            <b>隐私</b>：所有处理均在浏览器本地完成，图片不会上传。支持常见图片 / HEIC（iPhone）/ PDF（按页处理）；高清大图自动降采样识别。
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="rules.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const cv = $("cv");
+    const ctx = cv.getContext("2d");
+
+    const state = {
+      img: null,
+      worker: null,
+      detecting: false,
+      tool: "solid",      // 当前工具（唯一状态源：工具条）
+      detections: [],     // [{id,type,label,sample,boxes,selected,style}]
+      manualBoxes: [],    // [{x,y,w,h,style}]
+      strokes: [],        // [{points,size,color}]
+      lines: [],          // OCR 文字行（双击整行打码用）
+      words: [],          // 全部单词 bbox（长按/右键精确到字）
+      emojis: [],         // 笑脸贴纸
+      history: [],
+      faceModelReady: false,
+      pdf: null,          // {doc, numPages, page}
+      sel: null,
+      selEmoji: null,
+      mode: null,         // {type:'move'|'resize'|'draw'|'marquee'}
+      emojiDrag: null,
+      handleSize: 12,
+      drag: null,
+      dragMoved: false,
+      longPressFired: false,
+      lpTimer: null,
+      lastEmojiTap: 0,
+      lastEmoji: null,
+      lastTap: 0,
+      lastTapP: null,
+      zoom: { scale: 1, tx: 0, ty: 0 },  // 画布缩放/平移（CSS transform）
+    };
+    const pointers = new Map();           // 活动指针（触屏多指跟踪）
+    let pinch = null;                     // 双指捏合 {lastDist,lastCx,lastCy}（仅桌面启用）
+    const mobile = () => window.matchMedia("(max-width: 768px)").matches;
+
+    /* ---------------- 敏感信息检测规则（数据在 rules.js） ---------------- */
+
+    const { DETECTORS, LABELS_RE, NAME_LABELS_RE, CJK_NAME_RE, PINYIN_NAME_RE } = window.DAMA_RULES;
+
+    const maskSample = (s) => {
+      if (s.length <= 4) return s[0] + "*".repeat(s.length - 1);
+      return s.slice(0, 2) + "*".repeat(Math.max(2, s.length - 4)) + s.slice(-2);
+    };
+
+    let detId = 0;
+
+    /* ---------------- OCR ---------------- */
+
+    async function getWorker() {
+      if (state.worker) return state.worker;
+      setStatus("首次运行需下载中文识别模型（约 5MB），请稍候…");
+      const worker = await Tesseract.createWorker("chi_sim+eng", 1, {
+        logger: (m) => {
+          if (m.status === "recognizing text") {
+            setStatus(`识别中… ${Math.round((m.progress || 0) * 100)}%`);
+          } else if (String(m.status).includes("loading") || String(m.status).includes("initializing")) {
+            setStatus(`初始化中… ${m.status}`);
+          }
+        },
+      });
+      state.worker = worker;
+      return worker;
+    }
+
+    function collectLines(data, k = 1) {
+      const lines = [];
+      for (const b of data.blocks || []) {
+        for (const p of b.paragraphs || []) {
+          for (const l of p.lines || []) {
+            const words = (l.words || [])
+              .map((w) => ({
+                text: (w.text || "").trim(),
+                bbox: { x0: w.bbox.x0 * k, y0: w.bbox.y0 * k, x1: w.bbox.x1 * k, y1: w.bbox.y1 * k },
+              }))
+              .filter((w) => w.text.length > 0);
+            if (words.length) lines.push({ words });
+          }
+        }
+      }
+      if (!lines.length && data.words) {
+        const byLine = new Map();
+        for (const w of data.words) {
+          const key = w.line && w.line.line_num;
+          if (!byLine.has(key)) byLine.set(key, []);
+          byLine.get(key).push(w);
+        }
+        for (const ws of byLine.values()) {
+          const words = ws.map((w) => ({
+            text: (w.text || "").trim(),
+            bbox: { x0: w.bbox.x0 * k, y0: w.bbox.y0 * k, x1: w.bbox.x1 * k, y1: w.bbox.y1 * k },
+          })).filter((w) => w.text.length);
+          if (words.length) lines.push({ words });
+        }
+      }
+      return lines;
+    }
+
+    /* ---------------- 检测逻辑 ---------------- */
+
+    // 行分析：拼接整行文字 + 每个字符对应的词索引 + 由字符区间反推 bbox
+    function lineAnalyzer(words) {
+      let full = "";
+      const charWord = [];
+      words.forEach((w, wi) => {
+        if (full.length > 0) { full += " "; charWord.push(-1); }
+        for (const ch of w.text) { full += ch; charWord.push(wi); }
+      });
+      const boxesForRange = (start, end) => {
+        const wIdxs = new Set();
+        for (let i = start; i < end && i < charWord.length; i++) {
+          if (charWord[i] >= 0) wIdxs.add(charWord[i]);
+        }
+        if (!wIdxs.size) return null;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const wi of wIdxs) {
+          const b = words[wi].bbox;
+          x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0);
+          x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
+        }
+        const pad = Math.max(3, (y1 - y0) * 0.15);
+        return { x: x0 - pad, y: y0 - pad, w: (x1 - x0) + pad * 2, h: (y1 - y0) + pad * 2 };
+      };
+      return { full, charWord, boxesForRange };
+    }
+
+    function detectLine(words) {
+      const found = [];
+      const a = lineAnalyzer(words);
+      if (!a.full) return found;
+
+      const pushDet = (type, label, text, box) => {
+        if (!box) return;
+        found.push({ id: detId++, type, label, sample: maskSample(text), boxes: [box], selected: true, style: null });
+      };
+
+      for (const det of DETECTORS) {
+        det.re.lastIndex = 0;
+        let m;
+        while ((m = det.re.exec(a.full)) !== null) {
+          if (det.validate && !det.validate(m[0])) continue;
+          pushDet(det.type, det.label, m[0], a.boxesForRange(m.index, m.index + m[0].length));
+        }
+      }
+      return found;
+    }
+
+    /* -------- 标签邻近检测：医院报告/单据/发票通用 --------
+       认出「门诊号 / 病历号 / 发票号 …」等标签后，自动打：
+       ① 同一行标签右侧的值（号码/编号格式不限）
+       ② 标签单独成行时，下一行的数字/字母词（表格场景）
+       （LABELS_RE 等规则数据在 rules.js，顶部已解构） */
+
+    function overlapsAny(dets, box) {
+      for (const d of dets) {
+        for (const b of d.boxes) {
+          if (box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y) return true;
+        }
+      }
+      return false;
+    }
+
+    /* -------- 姓名标签检测 --------
+       「姓名/患者/收款人…」标签后的中文名（2-4 字）或拼音大写（登机牌常见 ZHANG SAN），
+       同行没有就打下一行第一个名字形状的词（表格场景）。宁可多打不漏打。
+       （NAME_LABELS_RE / CJK_NAME_RE / PINYIN_NAME_RE 在 rules.js） */
+
+    function detectNameProximity(lines, perLine) {
+      const nextLineDone = new Set();
+      for (let i = 0; i < lines.length; i++) {
+        const words = lines[i].words;
+        if (!words.length) continue;
+        const a = lineAnalyzer(words);
+        NAME_LABELS_RE.lastIndex = 0;
+        let m;
+        while ((m = NAME_LABELS_RE.exec(a.full)) !== null) {
+          let e = m.index + m[0].length;
+          while (e < a.full.length && /[\s:：.。、,，\-—]/.test(a.full[e])) e++;
+          const rest = a.full.slice(e);
+          const nm = CJK_NAME_RE.exec(rest) || PINYIN_NAME_RE.exec(rest);
+          if (nm && nm[0].length >= 2) {
+            const box = a.boxesForRange(e, e + nm[0].length);
+            if (box && !overlapsAny(perLine[i], box)) {
+              perLine[i].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(nm[0]), boxes: [box], selected: true, style: null });
+            }
+          } else if (i + 1 < lines.length && !nextLineDone.has(i + 1)) {
+            for (const w of lines[i + 1].words) {
+              const t = w.text.trim();
+              if ((CJK_NAME_RE.test(t) && t.length >= 2) || PINYIN_NAME_RE.test(t)) {
+                const b = w.bbox;
+                const box = { x: b.x0 - 3, y: b.y0 - 3, w: (b.x1 - b.x0) + 6, h: (b.y1 - b.y0) + 6 };
+                if (!overlapsAny(perLine[i + 1], box)) {
+                  perLine[i + 1].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(t), boxes: [box], selected: true, style: null });
+                }
+                nextLineDone.add(i + 1);
+                break; // 每行最多补一个名字
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function detectLabelProximity(lines, perLine) {
+      const nextLineDone = new Set();
+      for (let i = 0; i < lines.length; i++) {
+        const words = lines[i].words;
+        if (!words.length) continue;
+        const a = lineAnalyzer(words);
+        LABELS_RE.lastIndex = 0;
+        let m;
+        while ((m = LABELS_RE.exec(a.full)) !== null) {
+          // 跳过标签后的分隔符（：: 、 . 等）和「号码」这类后缀字
+          let e = m.index + m[0].length;
+          while (e < a.full.length && /[\s:：.。、,，\-—号码]/.test(a.full[e])) e++;
+          // 值 = 数字/字母/横杠组合（允许空格分组，总长限 32）
+          const vm = /^[A-Za-z0-9][A-Za-z0-9\-]*(?: [A-Za-z0-9\-]+)*/.exec(a.full.slice(e));
+          const val = vm ? vm[0].trim() : "";
+          if (val.length >= 3 && val.length <= 32) {
+            const box = a.boxesForRange(e, e + vm[0].length);
+            if (box && !overlapsAny(perLine[i], box)) {
+              perLine[i].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(val), boxes: [box], selected: true, style: null });
+            }
+          } else if (i + 1 < lines.length && !nextLineDone.has(i + 1)) {
+            // 标签同行无值 → 打下一行的数字/字母词（标签单独成行、值在下方）
+            const nextWords = lines[i + 1].words.filter((w) => {
+              const digits = w.text.replace(/[^0-9A-Za-z]/g, "");
+              return digits.length >= 2;
+            });
+            if (nextWords.length) {
+              const boxes = [];
+              let sample = "";
+              for (const w of nextWords) {
+                boxes.push({ x: w.bbox.x0 - 3, y: w.bbox.y0 - 3, w: (w.bbox.x1 - w.bbox.x0) + 6, h: (w.bbox.y1 - w.bbox.y0) + 6 });
+                sample += w.text;
+              }
+              const sampleOk = sample.replace(/[^0-9A-Za-z]/g, "").length >= 3;
+              if (sampleOk && !nextWords.some((w, j) => overlapsAny(perLine[i + 1], boxes[j]))) {
+                perLine[i + 1].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(sample), boxes, selected: true, style: null });
+                nextLineDone.add(i + 1);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    async function runDetect() {
+      if (!state.img || state.detecting) return;
+      state.detecting = true;
+      $("tbRun").disabled = true;
+      closePopovers();
+      state.detections = [];
+      detId = 0;
+      try {
+        const worker = await getWorker();
+        // 高清大图先降采样再 OCR（超大图 Tesseract 容易失败/误识别），坐标按比例映射回原图
+        const MAX_SIDE = 2000;
+        const maxSide = Math.max(state.img.naturalWidth, state.img.naturalHeight);
+        let src = state.img;
+        let scale = 1;
+        if (maxSide > MAX_SIDE) {
+          scale = MAX_SIDE / maxSide;
+          const sc = document.createElement("canvas");
+          sc.width = Math.round(state.img.naturalWidth * scale);
+          sc.height = Math.round(state.img.naturalHeight * scale);
+          sc.getContext("2d").drawImage(state.img, 0, 0, sc.width, sc.height);
+          src = sc;
+          setStatus(`图片较大，已降采样识别中…`);
+        } else {
+          setStatus("识别中…");
+        }
+        const { data } = await worker.recognize(src);
+        const k = 1 / scale;
+        const lines = collectLines(data, k);
+        state.lines = [];
+        state.words = [];
+        // 逐行检测：正则规则先行，标签邻近检测补充（可对照已有检测去重）
+        const perLine = [];
+        for (const line of lines) {
+          const dets = detectLine(line.words);
+          perLine.push(dets);
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+          for (const w of line.words) {
+            state.words.push(w);
+            x0 = Math.min(x0, w.bbox.x0); y0 = Math.min(y0, w.bbox.y0);
+            x1 = Math.max(x1, w.bbox.x1); y1 = Math.max(y1, w.bbox.y1);
+          }
+          const pad = Math.max(2, Math.min((y1 - y0) * 0.12, 14));
+          state.lines.push({ box: { x: x0 - pad, y: y0 - pad, w: (x1 - x0) + pad * 2, h: (y1 - y0) + pad * 2 }, _box: null });
+        }
+        detectLabelProximity(lines, perLine);
+        detectNameProximity(lines, perLine);
+        perLine.forEach((dets) => state.detections.push(...dets));
+        await detectFaces(src, k);
+        // 检测项固定用色块（不跟随当前工具）；人脸固定用笑脸
+        for (const d of state.detections) {
+          if (!d.style) d.style = d.type === "face" ? { tool: "emoji" } : { tool: "solid", color: "#111111" };
+        }
+        if (!state.lines.length) {
+          setStatus("未识别到文字：图片可能过小、过模糊或非印刷体。可手动拖框打码。", 5000);
+        } else {
+          setStatus(`完成：识别到 ${state.lines.length} 行文字，命中 ${state.detections.length} 处。点「结果」查看清单。`, 3000);
+        }
+        if (state.detections.length) openPopover("popResults");
+      } catch (e) {
+        console.error(e);
+        setStatus("识别失败：" + e.message);
+      }
+      state.detecting = false;
+      $("tbRun").disabled = false;
+      renderList();
+      render();
+    }
+
+    /* ---------------- 人脸检测（face-api.js） ---------------- */
+
+    async function detectFaces(srcEl, k = 1) {
+      if (!window.faceapi) return;
+      try {
+        if (!state.faceModelReady) {
+          setStatus("首次加载人脸检测模型（约 200KB）…");
+          await faceapi.nets.tinyFaceDetector.loadFromUri("https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/");
+          state.faceModelReady = true;
+        }
+        setStatus("检测人脸中…");
+        const results = await faceapi.detectAllFaces(
+          srcEl,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })
+        );
+        for (const r of results) {
+          const b = r.box;
+          const pad = Math.min(b.width, b.height) * 0.08;
+          state.detections.push({
+            id: detId++,
+            type: "face",
+            label: "人脸",
+            sample: "笑脸遮挡",
+            boxes: [{ x: (b.x - pad) * k, y: (b.y - pad) * k, w: (b.width + pad * 2) * k, h: (b.height + pad * 2) * k }],
+            selected: true,
+            style: { tool: "emoji" },
+          });
+        }
+      } catch (e) {
+        console.warn("人脸检测不可用：", e.message);
+      }
+    }
+
+    /* ---------------- UI ---------------- */
+
+    let statusTimer = null;
+    function setStatus(s, autoHideMs) {
+      $("status").textContent = s;
+      $("status").classList.toggle("show", !!s);
+      clearTimeout(statusTimer);
+      if (s && autoHideMs) statusTimer = setTimeout(() => setStatus(""), autoHideMs);
+    }
+
+    function openPopover(id) {
+      closePopovers();
+      $(id).classList.add("show");
+    }
+    function closePopovers() {
+      document.querySelectorAll(".popover").forEach((p) => p.classList.remove("show"));
+    }
+    document.addEventListener("click", (e) => {
+      if (e.target.closest(".popover")) return;
+      if (e.target.closest("#tbResults") || e.target.closest("#tbHelp")) return;
+      closePopovers();
+    });
+
+    function renderList() {
+      const ul = $("detList");
+      ul.innerHTML = "";
+      $("detCount").textContent = state.detections.length ? `(${state.detections.length})` : "";
+      $("noDet").style.display = state.detections.length ? "none" : "block";
+      for (const d of state.detections) {
+        const li = document.createElement("li");
+        if (!d.selected) li.classList.add("off");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = d.selected;
+        cb.addEventListener("click", (e) => e.stopPropagation());
+        cb.addEventListener("change", () => { d.selected = cb.checked; renderList(); render(); });
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = d.label;
+        const txt = document.createElement("span");
+        txt.className = "txt hit";
+        txt.textContent = d.sample;
+        li.append(cb, badge, txt);
+        li.addEventListener("click", () => {
+          d.selected = !d.selected;
+          if (!d.selected && state.sel && state.sel.kind === "det" && state.sel.det === d) deselect();
+          renderList();
+          render();
+        });
+        ul.appendChild(li);
+      }
+    }
+
+    /* ---------------- 打码渲染（样式跟随块自身的 style 快照） ---------------- */
+
+    function drawFaceEmoji(box) {
+      const size = Math.floor(Math.min(box.w, box.h) * 1.15);
+      ctx.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("😄", box.x + box.w / 2, box.y + box.h / 2);
+    }
+
+    function drawEmoji(em) {
+      ctx.font = `${em.size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("😄", em.x, em.y);
+    }
+
+    function emojiAt(pt) {
+      for (let i = state.emojis.length - 1; i >= 0; i--) {
+        const em = state.emojis[i];
+        const h = em.size / 2;
+        if (pt.x >= em.x - h && pt.x <= em.x + h && pt.y >= em.y - h && pt.y <= em.y + h) {
+          return em;
+        }
+      }
+      return null;
+    }
+
+    function drawStrokeSegment(s, from, to) {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.size;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+    }
+
+    function drawStroke(s) {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.size;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      s.points.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
+      ctx.stroke();
+    }
+
+    function inpaintFill(box) {
+      const sample = (sx, sy, sw, sh) => {
+        sx = Math.max(0, Math.min(sx, cv.width - 1));
+        sy = Math.max(0, Math.min(sy, cv.height - 1));
+        sw = Math.max(1, Math.min(sw, cv.width - sx));
+        sh = Math.max(1, Math.min(sh, cv.height - sy));
+        const d = ctx.getImageData(sx, sy, sw, sh).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 16) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+        return [r / n, g / n, b / n];
+      };
+      const m = 6;
+      const strips = [
+        sample(box.x, box.y - m, box.w, m),
+        sample(box.x, box.y + box.h, box.w, m),
+        sample(box.x - m, box.y, m, box.h),
+        sample(box.x + box.w, box.y, m, box.h),
+      ].filter((s) => s.every((v) => !isNaN(v)));
+      if (!strips.length) return;
+      const avg = [0, 1, 2].map((k) => Math.round(strips.reduce((a, s) => a + s[k], 0) / strips.length));
+      ctx.fillStyle = `rgb(${avg[0]},${avg[1]},${avg[2]})`;
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+    }
+
+    function applyRedact(box, style) {
+      const tool = (style && style.tool) || "solid";
+      if (tool === "emoji") { drawFaceEmoji(box); return; }
+      if (tool === "mosaic") {
+        const px = (style && style.px) || 14;
+        const tmp = document.createElement("canvas");
+        tmp.width = Math.max(1, Math.round(box.w / px));
+        tmp.height = Math.max(1, Math.round(box.h / px));
+        const tctx = tmp.getContext("2d");
+        tctx.drawImage(cv, box.x, box.y, box.w, box.h, 0, 0, tmp.width, tmp.height);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, box.x, box.y, box.w, box.h);
+        ctx.imageSmoothingEnabled = true;
+      } else if (tool === "blur") {
+        const r = (style && style.blur) || 10;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(box.x, box.y, box.w, box.h);
+        ctx.clip();
+        ctx.filter = `blur(${r}px)`;
+        ctx.drawImage(cv, 0, 0);
+        ctx.drawImage(cv, 0, 0);
+        ctx.filter = "none";
+        ctx.restore();
+      } else if (tool === "inpaint") {
+        inpaintFill(box);
+      } else {
+        ctx.fillStyle = (style && style.color) || "#111111";
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+      }
+    }
+
+    function drawSelection(b) {
+      const scale = (cv.getBoundingClientRect().width / cv.width) || 1;
+      const hs = Math.max(7, 9 * scale);
+      state.handleSize = hs;
+      ctx.strokeStyle = "#66a0f8";
+      ctx.lineWidth = Math.max(1.5, 2 * scale);
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+      const corners = [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]];
+      for (const [cx, cy] of corners) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2);
+        ctx.strokeStyle = "#4f8ef7";
+        ctx.lineWidth = Math.max(1.5, 2 * scale);
+        ctx.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2);
+      }
+    }
+
+    function render() {
+      if (!state.img) return;
+      ctx.drawImage(state.img, 0, 0);
+      for (const d of state.detections) {
+        if (!d.selected) continue;
+        for (const b of d.boxes) applyRedact(b, d.style);
+      }
+      for (const b of state.manualBoxes) applyRedact(b, b.style);
+      for (const s of state.strokes) drawStroke(s);
+      for (const em of state.emojis) drawEmoji(em);
+      // 选中的笑脸贴纸画虚线圈提示
+      if (state.selEmoji) {
+        const em = state.selEmoji;
+        ctx.strokeStyle = "#66a0f8";
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = Math.max(1.5, 2 * ((cv.getBoundingClientRect().width / cv.width) || 1));
+        ctx.beginPath();
+        ctx.arc(em.x, em.y, em.size * 0.62, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (state.sel) drawSelection(state.sel.box);
+      if (state.drag) {
+        const { x0, y0, x1, y1 } = state.drag;
+        ctx.strokeStyle = "#66a0f8";
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+        ctx.setLineDash([]);
+      }
+    }
+
+    // 重绘合帧：一帧最多一次全量 render，拖动/缩放不卡
+    let rafPending = false;
+    function requestRender() {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => { rafPending = false; render(); });
+    }
+
+    /* ---------------- 选中与编辑 ---------------- */
+
+    const inside = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+
+    function blockAt(pt) {
+      for (let i = state.manualBoxes.length - 1; i >= 0; i--) {
+        if (inside(state.manualBoxes[i], pt)) return { kind: "manual", box: state.manualBoxes[i] };
+      }
+      for (let i = state.detections.length - 1; i >= 0; i--) {
+        const d = state.detections[i];
+        if (!d.selected) continue;
+        for (const b of d.boxes) {
+          if (inside(b, pt)) return { kind: "det", det: d, box: b };
+        }
+      }
+      return null;
+    }
+
+    function lineAt(pt) {
+      for (const l of state.lines) {
+        if (inside(l.box, pt)) return l;
+      }
+      return null;
+    }
+
+    function handleAt(pt) {
+      if (!state.sel) return -1;
+      const b = state.sel.box;
+      const hs = state.handleSize * 1.6;
+      const corners = [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]];
+      for (let i = 0; i < 4; i++) {
+        if (Math.abs(pt.x - corners[i][0]) <= hs && Math.abs(pt.y - corners[i][1]) <= hs) return i;
+      }
+      return -1;
+    }
+
+    function select(hit) {
+      state.sel = hit;
+      state.selEmoji = null;
+      const label =
+        hit.kind === "manual" ? "手动块" :
+        hit.det.type === "face" ? "人脸（笑脸）" : hit.det.label;
+      $("tbSelInfo").textContent = label;
+      $("tbEdit").classList.add("show");
+      // 选中块 → 工具条自动切到该块的工具（不回写样式）
+      const owner = hit.kind === "manual" ? hit.box : hit.det;
+      const t = owner.style ? owner.style.tool : (hit.kind === "det" && hit.det.type === "face" ? "emoji" : state.tool);
+      if (t !== state.tool) setTool(t, false);
+      setStatus(`已选中：${label}（拖动移动，拉四角缩放）`, 2500);
+    }
+
+    function deselect() {
+      state.sel = null;
+      state.selEmoji = null;
+      $("tbEdit").classList.remove("show");
+    }
+
+    // 选中笑脸贴纸：虚线圈 + 编辑条（删除/完成）+ 滑块同步为它的大小
+    function selectEmoji(em) {
+      state.sel = null;
+      state.selEmoji = em;
+      $("tbSelInfo").textContent = "笑脸";
+      $("tbEdit").classList.add("show");
+      $("emojiSize").value = Math.round(em.size);
+      $("emojiSizeVal").textContent = Math.round(em.size);
+      if (state.tool !== "emoji") setTool("emoji", false);
+      setStatus("已选中：笑脸（滑块调大小，拖动移位置）", 2500);
+    }
+
+    function applyResize(p, corner, orig) {
+      const b = state.sel.box;
+      let L = orig.x, T = orig.y, R = orig.x + orig.w, B = orig.y + orig.h;
+      if (corner === 0 || corner === 3) L = p.x; else R = p.x;
+      if (corner === 0 || corner === 1) T = p.y; else B = p.y;
+      b.x = Math.min(L, R);
+      b.w = Math.max(10, Math.abs(R - L));
+      b.y = Math.min(T, B);
+      b.h = Math.max(10, Math.abs(B - T));
+      clampBox(b);
+    }
+
+    const clampPt = (p) => ({
+      x: Math.max(0, Math.min(p.x, cv.width)),
+      y: Math.max(0, Math.min(p.y, cv.height)),
+    });
+
+    function clampBox(b) {
+      b.w = Math.min(b.w, cv.width);
+      b.h = Math.min(b.h, cv.height);
+      b.x = Math.max(0, Math.min(b.x, cv.width - b.w));
+      b.y = Math.max(0, Math.min(b.y, cv.height - b.h));
+    }
+
+    // 双击整行 → 生成一个普通可编辑色块（可拖动/缩放/删除，再双击同位置还原）
+    function toggleLine(l) {
+      if (l._box) {
+        const i = state.manualBoxes.indexOf(l._box);
+        if (i >= 0) state.manualBoxes.splice(i, 1);
+        const h = state.history.findIndex((a) => a.type === "box" && a.box === l._box);
+        if (h >= 0) state.history.splice(h, 1);
+        if (state.sel && state.sel.box === l._box) deselect();
+        l._box = null;
+      } else {
+        const box = { ...l.box, style: snapStyle() };
+        clampBox(box);
+        state.manualBoxes.push(box);
+        state.history.push({ type: "box", box });
+        l._box = box;
+        select({ kind: "manual", box });
+        updateUndo();
+      }
+      render();
+    }
+
+    // 长按 / 右键：精确到「字」的打码
+    function redactWordAt(pt) {
+      for (const w of state.words) {
+        const b = w.bbox;
+        if (pt.x < b.x0 || pt.x > b.x1 || pt.y < b.y0 || pt.y > b.y1) continue;
+        const chars = [...w.text];
+        const hasCJK = /[\u4e00-\u9fff]/.test(w.text);
+        let bx, by, bw, bh;
+        if (!hasCJK || chars.length <= 1) {
+          bx = b.x0 - 2; by = b.y0 - 2; bw = (b.x1 - b.x0) + 4; bh = (b.y1 - b.y0) + 4;
+        } else {
+          const cw = (b.x1 - b.x0) / chars.length;
+          const idx = Math.max(0, Math.min(chars.length - 1, Math.floor(((pt.x - b.x0) / (b.x1 - b.x0)) * chars.length)));
+          bx = b.x0 + idx * cw - 2; by = b.y0 - 2; bw = cw + 4; bh = (b.y1 - b.y0) + 4;
+        }
+        const box = { x: bx, y: by, w: bw, h: bh, style: snapStyle() };
+        const last = state.manualBoxes[state.manualBoxes.length - 1];
+        if (last && Math.abs(last.x - box.x) < 3 && Math.abs(last.y - box.y) < 3 &&
+            Math.abs(last.w - box.w) < 3 && Math.abs(last.h - box.h) < 3) return true;
+        state.manualBoxes.push(box);
+        state.history.push({ type: "box", box });
+        updateUndo();
+        render();
+        return true;
+      }
+      return false;
+    }
+
+    /* ---------------- 撤销 ---------------- */
+
+    function updateUndo() {
+      $("tbUndo").disabled = state.history.length === 0;
+    }
+
+    function undoLast() {
+      const a = state.history.pop();
+      if (!a) return;
+      if (a.type === "box") {
+        const i = state.manualBoxes.indexOf(a.box);
+        if (i >= 0) state.manualBoxes.splice(i, 1);
+        for (const l of state.lines) { if (l._box === a.box) l._box = null; }
+        if (state.sel && state.sel.box === a.box) deselect();
+      } else if (a.type === "stroke") {
+        state.strokes.pop();
+      } else if (a.type === "emoji") {
+        const removed = state.emojis.pop();
+        if (removed && state.selEmoji === removed) deselect();
+      }
+      render();
+    }
+
+    /* ---------------- 画布缩放（双指捏合 / 放大后单指平移） ---------------- */
+
+    function applyTransform() {
+      cv.style.transform = `translate(${state.zoom.tx}px, ${state.zoom.ty}px) scale(${state.zoom.scale})`;
+    }
+
+    function updateZoomUI() {
+      const ui = $("zoomUI");
+      if (state.zoom.scale > 1.01) {
+        ui.classList.remove("hidden");
+        $("zoomVal").textContent = state.zoom.scale.toFixed(1) + "x";
+      } else {
+        ui.classList.add("hidden");
+      }
+    }
+
+    function resetZoom() {
+      state.zoom.scale = 1; state.zoom.tx = 0; state.zoom.ty = 0;
+      applyTransform(); updateZoomUI();
+    }
+
+    // 以屏幕点 (qx,qy) 为锚点缩放（保持该点下的内容不动）
+    function zoomAt(qx, qy, factor) {
+      const r = cv.getBoundingClientRect();
+      const cx = r.left + r.width / 2 - state.zoom.tx;   // 未变换时的中心
+      const cy = r.top + r.height / 2 - state.zoom.ty;
+      const s0 = state.zoom.scale;
+      const s1 = Math.min(8, Math.max(1, s0 * factor));
+      state.zoom.tx = qx - cx - (s1 / s0) * (qx - state.zoom.tx - cx);
+      state.zoom.ty = qy - cy - (s1 / s0) * (qy - state.zoom.ty - cy);
+      state.zoom.scale = s1;
+    }
+
+    // 平移钳制：画布中心不许跑出舞台太远
+    function clampPan() {
+      if (state.zoom.scale <= 1) { state.zoom.tx = 0; state.zoom.ty = 0; return; }
+      const r = cv.getBoundingClientRect();
+      const st = $("stage").getBoundingClientRect();
+      const cx0 = r.left + r.width / 2, cy0 = r.top + r.height / 2;
+      const scx = st.left + st.width / 2, scy = st.top + st.height / 2;
+      const mx = Math.max(0, (r.width - st.width) / 2 + 60);
+      const my = Math.max(0, (r.height - st.height) / 2 + 60);
+      const ncx = Math.max(scx - mx, Math.min(scx + mx, cx0));
+      const ncy = Math.max(scy - my, Math.min(scy + my, cy0));
+      state.zoom.tx += ncx - cx0;
+      state.zoom.ty += ncy - cy0;
+    }
+
+    $("zoomReset").addEventListener("click", resetZoom);
+
+    /* ---------------- 统一指针交互（鼠标 + 触屏） ----------------
+
+       手势仲裁：
+       - 双指捏合 = 缩放/平移（进行中的绘制动作立即取消）
+       - 放大(>1x)后单指拖空白 = 平移画布；编辑（拖块/拉角/拖笑脸）仍可用
+       - 1x 时单指 = 现有画图手势；任何倍率下点按 = 选中 */
+
+    function imgPoint(e) {
+      const rect = cv.getBoundingClientRect();
+      return {
+        x: ((e.clientX - rect.left) / rect.width) * cv.width,
+        y: ((e.clientY - rect.top) / rect.height) * cv.height,
+      };
+    }
+
+    cv.addEventListener("pointerdown", (e) => {
+      if (!state.img) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      cv.setPointerCapture(e.pointerId);
+      // 多指跟踪：桌面（宽屏）支持双指捏合；手机端放弃捏合，多指一律取消动作并忽略
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size >= 2) {
+        state.mode = null;
+        state.drag = null;
+        state.emojiDrag = null;
+        state.pendingGrab = null;
+        state.pendingEmoji = null;
+        clearTimeout(state.lpTimer);
+        state.longPressFired = false;
+        if (!mobile() && pointers.size === 2) {
+          const [a, b] = [...pointers.values()];
+          pinch = {
+            lastDist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+            lastCx: (a.x + b.x) / 2,
+            lastCy: (a.y + b.y) / 2,
+          };
+        }
+        return;
+      }
+      if (pinch) return; // 捏合结束前的余指忽略
+      const p = clampPt(imgPoint(e));
+      closePopovers();
+      // ===== 编辑态：锁定当前对象，只能编辑它（点「完成」/「删除」/轻点空白退出） =====
+      if (state.selEmoji) {
+        const em = state.selEmoji;
+        if (emojiAt(p) === em) {
+          state.pendingEmoji = { em, dx: p.x - em.x, dy: p.y - em.y, p0: p };
+        } else {
+          state.mode = { type: "blocked", p0: p, moved: false };
+        }
+        return;
+      }
+      if (state.sel) {
+        const c = handleAt(p);
+        if (c >= 0) {
+          state.pendingGrab = { kind: "resize", corner: c, p0: p };
+          return;
+        }
+        if (inside(state.sel.box, p)) {
+          state.pendingGrab = { kind: "move", dx: p.x - state.sel.box.x, dy: p.y - state.sel.box.y, p0: p };
+          return;
+        }
+        // 点到当前对象以外：轻点 = 取消选中；拖拽 = 拦截并提示先点「完成」
+        state.mode = { type: "blocked", p0: p, moved: false };
+        return;
+      }
+      // ===== 自由态：可新增 =====
+      // 笑脸工具下先抓笑脸（笑脸常常盖在块上面，否则会被块抢走）
+      if (state.tool === "emoji") {
+        const em = emojiAt(p);
+        if (em) {
+          state.pendingEmoji = { em, dx: p.x - em.x, dy: p.y - em.y, p0: p };
+          return;
+        }
+      }
+      // 点已有块 → 选中（并自动切到该块的工具）
+      const hit = blockAt(p);
+      if (hit) { clampBox(hit.box); select(hit); render(); return; }
+      // 放大状态下：空白处单指 = 平移画布（不画图）；编辑类手势在上面已接管
+      if (state.zoom.scale > 1) {
+        state.mode = { type: "pan", px: e.clientX, py: e.clientY, moved: false };
+        return;
+      }
+      // 笑脸工具：空白处放置新笑脸
+      if (state.tool === "emoji") {
+        const nem = { x: p.x, y: p.y, size: Math.max(40, Math.min(800, +$("emojiSize").value)) };
+        state.emojis.push(nem);
+        state.history.push({ type: "emoji" });
+        updateUndo();
+        state.emojiDrag = { em: nem, dx: 0, dy: 0, moved: false };
+        selectEmoji(nem);
+        render();
+        return;
+      }
+      // 5. 画笔：开始一笔涂抹（单击也留下圆点痕迹）
+      if (state.tool === "brush") {
+        const stroke = { points: [p], size: +$("brushSize").value, color: $("solidColor").value };
+        state.mode = { type: "draw", stroke };
+        ctx.fillStyle = stroke.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, stroke.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      // 6. 空白：新增块 / 长按打字
+      state.mode = { type: "marquee" };
+      state.drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+      state.dragMoved = false;
+      state.longPressFired = false;
+      clearTimeout(state.lpTimer);
+      state.lpTimer = setTimeout(() => {
+        if (!state.dragMoved && redactWordAt(p)) state.longPressFired = true;
+      }, 550);
+    });
+
+    cv.addEventListener("pointermove", (e) => {
+      if (!state.img) return;
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // 双指捏合：以两指中点为锚点缩放 + 中点位移平移
+      if (pinch && pointers.size >= 2) {
+        const [a, b] = [...pointers.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+        zoomAt(cx, cy, d / pinch.lastDist);
+        state.zoom.tx += cx - pinch.lastCx;
+        state.zoom.ty += cy - pinch.lastCy;
+        clampPan(); applyTransform(); updateZoomUI();
+        pinch.lastDist = d; pinch.lastCx = cx; pinch.lastCy = cy;
+        return;
+      }
+      // 放大后单指平移
+      if (state.mode && state.mode.type === "pan") {
+        const dx = e.clientX - state.mode.px, dy = e.clientY - state.mode.py;
+        if (Math.abs(dx) + Math.abs(dy) > 3) state.mode.moved = true;
+        state.zoom.tx += dx; state.zoom.ty += dy;
+        state.mode.px = e.clientX; state.mode.py = e.clientY;
+        clampPan(); applyTransform();
+        return;
+      }
+      // 延迟激活的块抓取：移动超过阈值才真正抓住（防捏合误跳块）
+      const p = clampPt(imgPoint(e));
+      if (state.pendingGrab) {
+        const g = state.pendingGrab;
+        if (Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 8 / state.zoom.scale) {
+          state.pendingGrab = null;
+          if (g.kind === "resize") state.mode = { type: "resize", corner: g.corner, orig: { ...state.sel.box } };
+          else state.mode = { type: "move", dx: g.dx, dy: g.dy };
+        } else return;
+      }
+      // 延迟激活的笑脸拖动
+      if (state.pendingEmoji) {
+        const g = state.pendingEmoji;
+        if (Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 8 / state.zoom.scale) {
+          state.pendingEmoji = null;
+          state.emojiDrag = { em: g.em, dx: g.dx, dy: g.dy, moved: false };
+        } else return;
+      }
+      // 编辑态下拖到对象以外：提示先点「完成」（只提示一次）
+      if (state.mode && state.mode.type === "blocked") {
+        if (!state.mode.moved && Math.hypot(p.x - state.mode.p0.x, p.y - state.mode.p0.y) > 8) {
+          state.mode.moved = true;
+          setStatus("请先点「完成」结束当前编辑，再添加新内容", 2500);
+        }
+        return;
+      }
+      if (state.emojiDrag) {
+        const { em, dx, dy } = state.emojiDrag;
+        em.x = Math.max(0, Math.min(p.x - dx, cv.width));
+        em.y = Math.max(0, Math.min(p.y - dy, cv.height));
+        state.emojiDrag.moved = true;
+        render();
+        return;
+      }
+      if (!state.mode) return;
+      if (state.mode.type === "draw") {
+        // 增量绘制：只画新增线段，不做全量重绘（这是画笔卡顿的根因）
+        const s = state.mode.stroke;
+        const last = s.points[s.points.length - 1];
+        s.points.push(p);
+        drawStrokeSegment(s, last, p);
+        return;
+      }
+      if (state.mode.type === "move") {
+        const b = state.sel.box;
+        b.x = p.x - state.mode.dx;
+        b.y = p.y - state.mode.dy;
+        clampBox(b);
+        requestRender();
+        return;
+      }
+      if (state.mode.type === "resize") {
+        applyResize(p, state.mode.corner, state.mode.orig);
+        requestRender();
+        return;
+      }
+      if (state.mode.type === "marquee") {
+        if (Math.abs(p.x - state.drag.x0) > 4 || Math.abs(p.y - state.drag.y0) > 4) {
+          state.dragMoved = true;
+          clearTimeout(state.lpTimer);
+        }
+        state.drag.x1 = p.x; state.drag.y1 = p.y;
+        requestRender();
+      }
+    });
+
+    function endPointer(e) {
+      if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
+      if (pinch) {
+        // 捏合期间/刚结束的抬指不触发任何绘制逻辑
+        if (pointers.size < 2) pinch = null;
+        return;
+      }
+      // 未激活的抓取（轻点已选中的块）：无动作
+      if (state.pendingGrab) { state.pendingGrab = null; return; }
+      // 未激活的笑脸拖动（轻点笑脸）：单击选中 / 双击删除
+      if (state.pendingEmoji) {
+        const g = state.pendingEmoji;
+        state.pendingEmoji = null;
+        const now = Date.now();
+        if (now - state.lastEmojiTap < 350 && state.lastEmoji === g.em) {
+          const i = state.emojis.indexOf(g.em);
+          if (i >= 0) state.emojis.splice(i, 1);
+          if (state.selEmoji === g.em) state.selEmoji = null;
+          state.lastEmojiTap = 0;
+        } else {
+          state.lastEmojiTap = now;
+          state.lastEmoji = g.em;
+          selectEmoji(g.em);
+        }
+        render();
+        return;
+      }
+      if (state.mode && state.mode.type === "pan") {
+        const moved = state.mode.moved;
+        state.mode = null;
+        if (!moved && (state.sel || state.selEmoji)) { deselect(); render(); }
+        return;
+      }
+      // 编辑态锁定模式的收尾：轻点 = 取消选中；拖拽 = 已提示，无动作
+      if (state.mode && state.mode.type === "blocked") {
+        const moved = state.mode.moved;
+        state.mode = null;
+        if (!moved && (state.sel || state.selEmoji)) { deselect(); render(); }
+        return;
+      }
+      if (state.emojiDrag) {
+        const { em, moved } = state.emojiDrag;
+        state.emojiDrag = null;
+        if (!moved) {
+          const now = Date.now();
+          if (now - state.lastEmojiTap < 350 && state.lastEmoji === em) {
+            // 双击（双触）删除
+            const i = state.emojis.indexOf(em);
+            if (i >= 0) state.emojis.splice(i, 1);
+            if (state.selEmoji === em) state.selEmoji = null;
+            state.lastEmojiTap = 0;
+          } else {
+            // 单击（单触）= 选中，滑块可调大小
+            state.lastEmojiTap = now;
+            state.lastEmoji = em;
+            selectEmoji(em);
+          }
+          render();
+        }
+        return;
+      }
+      if (!state.mode) return;
+      const type = state.mode.type;
+      if (type === "draw") {
+        state.strokes.push(state.mode.stroke);
+        state.history.push({ type: "stroke" });
+        state.mode = null;
+        updateUndo();
+        render();
+        return;
+      }
+      state.mode = null;
+      if (type === "move" || type === "resize") return;
+      clearTimeout(state.lpTimer);
+      if (state.longPressFired) { state.longPressFired = false; state.drag = null; return; }
+      const { x0, y0, x1, y1 } = state.drag;
+      state.drag = null;
+      if (!state.dragMoved) {
+        // 轻点空白：双击窗口内且落在文字行上 → 整行打码；否则取消选中
+        const now = Date.now();
+        const p0 = { x: x0, y: y0 };
+        const isDouble = now - state.lastTap < 350 &&
+          state.lastTapP && Math.hypot(p0.x - state.lastTapP.x, p0.y - state.lastTapP.y) < 40;
+        state.lastTap = now;
+        state.lastTapP = p0;
+        if (isDouble) {
+          state.lastTap = 0;
+          const lineHit = lineAt(p0);
+          if (lineHit) { toggleLine(lineHit); return; }
+        }
+        if (state.sel || state.selEmoji) { deselect(); render(); }
+        return;
+      }
+      const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+      if (w > 8 && h > 8) {
+        const box = { x: Math.min(x0, x1), y: Math.min(y0, y1), w, h, style: snapStyle() };
+        state.manualBoxes.push(box);
+        state.history.push({ type: "box", box });
+        updateUndo();
+        select({ kind: "manual", box });
+      }
+      render();
+    }
+
+    cv.addEventListener("pointerup", endPointer);
+    cv.addEventListener("pointercancel", (e) => {
+      if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      state.emojiDrag = null;
+      state.pendingGrab = null;
+      state.pendingEmoji = null;
+      state.mode = null;
+      state.drag = null;
+      clearTimeout(state.lpTimer);
+    });
+
+    cv.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (!state.img || !state.words.length) return;
+      redactWordAt(clampPt(imgPoint(e)));
+    });
+
+    /* ---------------- 工具条（唯一工具状态源） ---------------- */
+
+    function snapStyle() {
+      return {
+        tool: state.tool,
+        px: +$("pixelSize").value,
+        blur: +$("blurRadius").value,
+        color: $("solidColor").value,
+      };
+    }
+
+    const TOOL_PARAMS = {
+      solid:  ["color"],
+      brush:  ["color", "brushSize"],
+      mosaic: ["pixelSize"],
+      blur:   ["blurRadius"],
+      emoji:  ["emojiSize"],
+      inpaint: [],
+    };
+
+    function updateTbParams() {
+      const show = TOOL_PARAMS[state.tool] || [];
+      document.querySelectorAll("#tbParams .tp").forEach((el) => {
+        el.classList.toggle("hidden", !show.includes(el.dataset.p));
+      });
+    }
+
+    // applyToSelection=false：仅切按钮，不把新样式写进选中块
+    // 笑脸类对象（人脸检测、笑脸样式的块）永远不参与"换工具改样式"——笑脸不该被换成色块
+    function isEmojiObj(sel) {
+      const owner = sel.kind === "manual" ? sel.box : sel.det;
+      return (sel.kind === "det" && sel.det.type === "face") || (owner.style && owner.style.tool === "emoji");
+    }
+
+    function setTool(t, applyToSelection = true) {
+      state.tool = t;
+      document.querySelectorAll("#tbTools .tb-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tool === t);
+      });
+      updateTbParams();
+      if (applyToSelection && state.sel && !isEmojiObj(state.sel)) {
+        const st = snapStyle();
+        if (state.sel.kind === "manual") state.sel.box.style = st;
+        else state.sel.det.style = st;
+      }
+      render();
+    }
+
+    // 工具切换 = 当前块改样式（编辑态）/ 选下一个要画的样式（自由态）
+    document.querySelectorAll("#tbTools .tb-btn").forEach((b) => {
+      b.addEventListener("click", () => setTool(b.dataset.tool));
+    });
+
+    $("tbDelete").addEventListener("click", () => {
+      const sel = state.sel;
+      if (state.selEmoji) {
+        const em = state.selEmoji;
+        const i = state.emojis.indexOf(em);
+        if (i >= 0) state.emojis.splice(i, 1);
+        deselect();
+        render();
+        return;
+      }
+      if (!sel) return;
+      if (sel.kind === "manual") {
+        const i = state.manualBoxes.indexOf(sel.box);
+        if (i >= 0) state.manualBoxes.splice(i, 1);
+        const h = state.history.findIndex((a) => a.type === "box" && a.box === sel.box);
+        if (h >= 0) state.history.splice(h, 1);
+        for (const l of state.lines) { if (l._box === sel.box) l._box = null; }
+        updateUndo();
+      } else if (sel.kind === "det") {
+        sel.det.selected = false;
+        renderList();
+      }
+      deselect();
+      render();
+    });
+    $("tbDone").addEventListener("click", () => { deselect(); render(); });
+    $("tbUndo").addEventListener("click", undoLast);
+    $("tbExport").addEventListener("click", exportPng);
+    $("tbRun").addEventListener("click", runDetect);
+    $("tbPick").addEventListener("click", () => $("fileInput").click());
+    $("tbResults").addEventListener("click", () => {
+      const open = $("popResults").classList.contains("show");
+      open ? closePopovers() : openPopover("popResults");
+    });
+    $("tbHelp").addEventListener("click", () => {
+      const open = $("popHelp").classList.contains("show");
+      open ? closePopovers() : openPopover("popHelp");
+    });
+    $("pgPrev").addEventListener("click", () => {
+      if (state.pdf && !state.detecting && state.pdf.page > 1) renderPdfPage(state.pdf.page - 1);
+    });
+    $("pgNext").addEventListener("click", () => {
+      if (state.pdf && !state.detecting && state.pdf.page < state.pdf.numPages) renderPdfPage(state.pdf.page + 1);
+    });
+
+    /* ---------------- 文件加载（图片 / PDF / HEIC） ---------------- */
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("组件加载失败：" + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function loadImageFile(file) {
+      if (!file) return;
+      const name = (file.name || "").toLowerCase();
+      const isPdf = file.type === "application/pdf" || name.endsWith(".pdf");
+      const isHeic = /\.(hei[cf])$/.test(name) || /image\/hei[cf]/.test(file.type || "");
+      try {
+        if (isPdf) { await loadPdfFile(file); return; }
+        if (isHeic) { await loadHeicFile(file); return; }
+      } catch (e) {
+        console.error(e);
+        setStatus("文件处理失败：" + e.message, 5000);
+        return;
+      }
+      if (file.type && !file.type.startsWith("image/")) {
+        setStatus("暂不支持该格式：" + (file.type || name) + "。支持常见图片 / HEIC / PDF。", 5000);
+        return;
+      }
+      await loadBitmap(file);
+    }
+
+    // 普通图片：优先 createImageBitmap（自动应用 EXIF 方向，iPhone 横竖拍不再歪）
+    async function loadBitmap(file) {
+      let drawable;
+      try {
+        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        const c = document.createElement("canvas");
+        c.width = bmp.width;
+        c.height = bmp.height;
+        c.getContext("2d").drawImage(bmp, 0, 0);
+        drawable = c;
+      } catch (e) {
+        // 老浏览器兜底：objectURL 直接解码
+        drawable = await new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("图片解码失败"));
+          img.src = url;
+        });
+      }
+      applyImage(drawable, false);
+    }
+
+    // HEIC / HEIF（iPhone 原生格式）：Safari 能直接解码；其他浏览器懒加载 heic2any（libheif WASM）转 PNG
+    async function loadHeicFile(file) {
+      setStatus("HEIC 转换中（首次需下载解码器约 2MB）…");
+      try {
+        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        const c = document.createElement("canvas");
+        c.width = bmp.width;
+        c.height = bmp.height;
+        c.getContext("2d").drawImage(bmp, 0, 0);
+        applyImage(c, false);
+        return;
+      } catch (e) { /* 浏览器不认 HEIC，走 WASM 解码 */ }
+      if (!window.heic2any) {
+        await loadScript("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js");
+      }
+      const out = await heic2any({ blob: file, toType: "image/png" });
+      const png = Array.isArray(out) ? out[0] : out;
+      await loadBitmap(png);
+    }
+
+    // PDF：pdf.js 按页渲染成位图走同一套 OCR / 打码流水线（页间切换，每页独立编辑）
+    async function loadPdfFile(file) {
+      setStatus("PDF 解析中（首次需下载 PDF 引擎约 1MB）…");
+      if (!window.pdfjsLib) {
+        await loadScript("https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      }
+      const buf = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+      state.pdf = { doc, numPages: doc.numPages, page: 1 };
+      $("pdfNav").classList.remove("hidden");
+      await renderPdfPage(1);
+    }
+
+    async function renderPdfPage(n) {
+      if (!state.pdf) return;
+      try {
+        setStatus(`渲染第 ${n}/${state.pdf.numPages} 页…`);
+        const page = await state.pdf.doc.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const k = Math.min(2.5, 2000 / Math.max(base.width, base.height));
+        const viewport = page.getViewport({ scale: k });
+        const c = document.createElement("canvas");
+        c.width = Math.round(viewport.width);
+        c.height = Math.round(viewport.height);
+        await page.render({ canvasContext: c.getContext("2d"), viewport }).promise;
+        state.pdf.page = n;
+        $("pgInfo").textContent = `${n}/${state.pdf.numPages}`;
+        applyImage(c, true);
+      } catch (e) {
+        console.error(e);
+        setStatus("PDF 页面渲染失败：" + e.message, 5000);
+      }
+    }
+
+    function applyImage(drawable, keepPdf) {
+      state.img = drawable;
+      cv.width = drawable.naturalWidth || drawable.width;
+      cv.height = drawable.naturalHeight || drawable.height;
+      cv.style.display = "block";
+      resetZoom();
+      $("emptyHint").style.display = "none";
+      $("tbRun").disabled = false;
+      $("tbExport").disabled = false;
+      $("toolbar").classList.add("show");
+      if (!keepPdf) { state.pdf = null; $("pdfNav").classList.add("hidden"); }
+      state.detections = [];
+      state.manualBoxes = [];
+      state.strokes = [];
+      state.lines = [];
+      state.words = [];
+      state.emojis = [];
+      state.history = [];
+      updateUndo();
+      deselect();
+      closePopovers();
+      renderList();
+      setStatus("图片已加载，点「识别」自动找敏感信息，或直接用工具打码。", 3000);
+      render();
+    }
+
+    /* ---------------- 事件绑定 ---------------- */
+
+    $("fileInput").addEventListener("change", (e) => loadImageFile(e.target.files[0]));
+
+    // 没有图片时，点舞台任意位置都能唤起上传
+    $("stage").addEventListener("click", (e) => {
+      if (!state.img && !e.target.closest("#toolbar")) $("fileInput").click();
+    });
+    $("stage").addEventListener("dragover", (e) => { e.preventDefault(); $("emptyHint").classList.add("dragover"); });
+    $("stage").addEventListener("dragleave", () => $("emptyHint").classList.remove("dragover"));
+    $("stage").addEventListener("drop", (e) => {
+      e.preventDefault();
+      $("emptyHint").classList.remove("dragover");
+      loadImageFile(e.dataTransfer.files[0]);
+    });
+    document.addEventListener("paste", (e) => {
+      const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+      if (item) loadImageFile(item.getAsFile());
+    });
+
+    // Esc = 完成当前编辑（先关气泡；没有气泡时提交选中状态）
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (document.querySelector(".popover.show")) { closePopovers(); return; }
+      if (state.sel || state.selEmoji) { deselect(); render(); }
+    });
+
+    $("pixelSize").addEventListener("input", () => { $("pixelVal").textContent = $("pixelSize").value; if (state.sel) setTool(state.tool); });
+    $("blurRadius").addEventListener("input", () => { $("blurVal").textContent = $("blurRadius").value; if (state.sel) setTool(state.tool); });
+    $("solidColor").addEventListener("input", () => { if (state.sel) setTool(state.tool); else render(); });
+    $("brushSize").addEventListener("input", () => { $("brushSizeVal").textContent = $("brushSize").value; });
+    $("emojiSize").addEventListener("input", () => {
+      const v = +$("emojiSize").value;
+      $("emojiSizeVal").textContent = v;
+      if (state.selEmoji) { state.selEmoji.size = v; render(); }
+    });
+
+    $("checkAll").addEventListener("click", () => { state.detections.forEach((d) => (d.selected = true)); renderList(); render(); });
+    $("uncheckAll").addEventListener("click", () => { state.detections.forEach((d) => (d.selected = false)); renderList(); render(); });
+
+    function exportPng() {
+      if (!state.img) return;
+      render();
+      const a = document.createElement("a");
+      a.download = "yinma-redacted-" + Date.now() + ".png";
+      a.href = cv.toDataURL("image/png");
+      a.click();
+    }
+
+    setTool("solid", false);
+  </script>
+</body>
+</html>

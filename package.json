@@ -1,0 +1,26 @@
+{
+  "name": "redactly",
+  "version": "1.0.0",
+  "description": "在浏览器本地给图片打码：自动识别手机号/身份证/银行卡/姓名/人脸，图片不上传。Redact sensitive info in images, entirely in your browser.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "vendor": "node scripts/fetch-vendor.mjs",
+    "vendor:force": "node scripts/fetch-vendor.mjs --force",
+    "serve": "python3 -m http.server 8765 --bind 127.0.0.1 --directory public",
+    "build": "node scripts/build-standalone.mjs",
+    "docker:build": "docker build -f docker/Dockerfile -t opcoderen/redactly:latest ."
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opcoderen/redactly"
+  },
+  "keywords": [
+    "redaction", "privacy", "ocr", "pii", "image-masking",
+    "tesseract", "face-detection", "offline", "self-hosted", "cloudflare-pages"
+  ]
+}

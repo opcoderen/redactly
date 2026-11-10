@@ -1,0 +1,10 @@
+# 运行时依赖，由 `npm run vendor` 生成，不入库（41MB）
+public/vendor/
+
+# 历史版本，不随仓库分发
+standalone/legacy/
+
+node_modules/
+.workbuddy/
+.DS_Store
+*.log
