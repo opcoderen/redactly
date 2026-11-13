@@ -153,13 +153,7 @@ const $ = (id) => document.getElementById(id);
       for (let i = 0; i < full.length; i++) {
         if (!/\s/.test(full[i])) { fullC += full[i]; cIdx.push(i); }
       }
-      const boxesForRange = (start, end) => {
-        const wIdxs = new Set();
-        for (let i = start; i < end && i < cIdx.length; i++) {
-          const fi = cIdx[i];
-          if (fi < charWord.length && charWord[fi] >= 0) wIdxs.add(charWord[fi]);
-        }
-        if (!wIdxs.size) return null;
+      const boxesForWords = (wIdxs) => {
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const wi of wIdxs) {
           const b = words[wi].bbox;
@@ -169,25 +163,92 @@ const $ = (id) => document.getElementById(id);
         const pad = Math.max(3, (y1 - y0) * 0.15);
         return { x: x0 - pad, y: y0 - pad, w: (x1 - x0) + pad * 2, h: (y1 - y0) + pad * 2 };
       };
-      return { full, fullC, charWord, boxesForRange };
+      const boxesForRange = (start, end) => {
+        const wIdxs = new Set();
+        for (let i = start; i < end && i < cIdx.length; i++) {
+          const fi = cIdx[i];
+          if (fi < charWord.length && charWord[fi] >= 0) wIdxs.add(charWord[fi]);
+        }
+        return wIdxs.size ? boxesForWords(wIdxs) : null;
+      };
+      // full 坐标系（含空格）的 bbox 映射，供按 run 匹配的数字类检测器使用
+      const boxesForRangeFull = (start, end) => {
+        const wIdxs = new Set();
+        for (let i = start; i < end && i < charWord.length; i++) {
+          if (charWord[i] >= 0) wIdxs.add(charWord[i]);
+        }
+        return wIdxs.size ? boxesForWords(wIdxs) : null;
+      };
+      return { full, fullC, charWord, boxesForRange, boxesForRangeFull };
     }
 
     function detectLine(words) {
       const found = [];
       const a = lineAnalyzer(words);
-      if (!a.fullC) return found;
+      if (!a.full) return found;
 
-      const pushDet = (type, label, text, box) => {
+      // suspect：校验位不过不丢弃，降级为「疑似」进清单。
+      // 默认仍然勾选打码（宁可多打），用户确认是误报后可手动取消。
+      const pushDet = (type, label, text, box, suspect) => {
         if (!box) return;
-        found.push({ id: detId++, type, label, sample: maskSample(text), boxes: [box], selected: true, style: null });
+        if (overlapsAny(found, box)) return; // 双通道命中同一位置时去重
+        found.push({ id: detId++, type, label, sample: maskSample(text), raw: text, boxes: [box],
+                     selected: true, suspect: !!suspect, style: null });
       };
 
-      for (const det of DETECTORS) {
-        det.re.lastIndex = 0;
-        let m;
-        while ((m = det.re.exec(a.fullC)) !== null) {
-          if (det.validate && !det.validate(m[0])) continue;
-          pushDet(det.type, det.label, m[0], a.boxesForRange(m.index, m.index + m[0].length));
+      /* -------- 通道 A：按 run 匹配数字类检测器 --------
+         压缩文本会把同一行的多个数字粘连（「15205808538 350102…」→「…383501…」），
+         让 (?<!\d)/(?!\d) 邻接断言失效。空格分隔的 run 才是数字的真实边界。 */
+      const runs = [];
+      for (let i = 0; i < a.full.length; ) {
+        if (/\s/.test(a.full[i])) { i++; continue; }
+        let j = i;
+        while (j < a.full.length && !/\s/.test(a.full[j])) j++;
+        runs.push({ text: a.full.slice(i, j), s: i, e: j });
+        i = j;
+      }
+      for (const run of runs) {
+        for (const det of DETECTORS) {
+          det.re.lastIndex = 0;
+          let m;
+          while ((m = det.re.exec(run.text)) !== null) {
+            const ok = !det.validate || det.validate(m[0]);
+            pushDet(det.type, ok ? det.label : det.label + "（疑似）", m[0],
+                    a.boxesForRangeFull(run.s + m.index, run.s + m.index + m[0].length), !ok);
+            if (!det.re.global) break;
+          }
+        }
+      }
+      // 相邻纯数字 run 拼接：卡片号常被 OCR 按四位一组断开（「6222 3604 6247 6274」）
+      const detBy = (t) => DETECTORS.find((d) => d.type === t);
+      for (let i = 0; i < runs.length; i++) {
+        if (!/^\d{3,8}$/.test(runs[i].text)) continue;
+        let j = i, digits = runs[i].text;
+        while (j + 1 < runs.length && /^\d{3,8}$/.test(runs[j + 1].text)
+               && runs[j + 1].s - runs[j].e <= 4 && digits.length < 19) {
+          j++; digits += runs[j].text;
+        }
+        if (digits.length === 11 && /^1[3-9]\d{9}$/.test(digits)) {
+          const det = detBy("phone");
+          pushDet(det.type, det.label, digits, a.boxesForRangeFull(runs[i].s, runs[j].e));
+        } else if (digits.length >= 15 && digits.length <= 19) {
+          const det = detBy("bankcard");
+          const ok = det.validate(digits);
+          pushDet(det.type, ok ? det.label : det.label + "（疑似）", digits,
+                  a.boxesForRangeFull(runs[i].s, runs[j].e), !ok);
+        }
+      }
+
+      /* -------- 通道 B：压缩文本（跨词的金额/日期/网址/机读码等） -------- */
+      if (a.fullC) {
+        for (const det of DETECTORS) {
+          det.re.lastIndex = 0;
+          let m;
+          while ((m = det.re.exec(a.fullC)) !== null) {
+            const ok = !det.validate || det.validate(m[0]);
+            pushDet(det.type, ok ? det.label : det.label + "（疑似）", m[0],
+                    a.boxesForRange(m.index, m.index + m[0].length), !ok);
+          }
         }
       }
       return found;
@@ -245,7 +306,7 @@ const $ = (id) => document.getElementById(id);
           if (nm && nm[0].length >= 2) {
             const box = a.boxesForRange(e, e + nm[0].length);
             if (box && !overlapsAny(perLine[i], box)) {
-              perLine[i].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(nm[0]), boxes: [box], selected: true, style: null });
+              perLine[i].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(nm[0]), raw: nm[0], boxes: [box], selected: true, style: null });
             }
           } else if (i + 1 < lines.length && !nextLineDone.has(i + 1)) {
             for (const w of lines[i + 1].words) {
@@ -254,7 +315,7 @@ const $ = (id) => document.getElementById(id);
                 const b = w.bbox;
                 const box = { x: b.x0 - 3, y: b.y0 - 3, w: (b.x1 - b.x0) + 6, h: (b.y1 - b.y0) + 6 };
                 if (!overlapsAny(perLine[i + 1], box)) {
-                  perLine[i + 1].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(t), boxes: [box], selected: true, style: null });
+                  perLine[i + 1].push({ id: detId++, type: "name", label: "姓名", sample: maskSample(t), raw: t, boxes: [box], selected: true, style: null });
                 }
                 nextLineDone.add(i + 1);
                 break; // 每行最多补一个名字
@@ -283,7 +344,7 @@ const $ = (id) => document.getElementById(id);
           if (val.length >= 3 && val.length <= 32) {
             const box = a.boxesForRange(e, e + vm[0].length);
             if (box && !overlapsAny(perLine[i], box)) {
-              perLine[i].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(val), boxes: [box], selected: true, style: null });
+              perLine[i].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(val), raw: val, boxes: [box], selected: true, style: null });
             }
           } else if (i + 1 < lines.length && !nextLineDone.has(i + 1)) {
             // 标签同行无值 → 打下一行的数字/字母词（标签单独成行、值在下方）
@@ -300,7 +361,7 @@ const $ = (id) => document.getElementById(id);
               }
               const sampleOk = sample.replace(/[^0-9A-Za-z]/g, "").length >= 3;
               if (sampleOk && !nextWords.some((w, j) => overlapsAny(perLine[i + 1], boxes[j]))) {
-                perLine[i + 1].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(sample), boxes, selected: true, style: null });
+                perLine[i + 1].push({ id: detId++, type: "labelval", label: "标签值", sample: maskSample(sample), raw: sample, boxes, selected: true, style: null });
                 nextLineDone.add(i + 1);
               }
             }
@@ -364,7 +425,8 @@ const $ = (id) => document.getElementById(id);
         if (!state.lines.length) {
           setStatus("未识别到文字：图片可能过小、过模糊或非印刷体。可手动拖框打码。", 5000);
         } else {
-          setStatus(`完成：识别到 ${state.lines.length} 行文字，命中 ${state.detections.length} 处。点「结果」查看清单。`, 3000);
+          const sus = state.detections.filter((d) => d.suspect).length;
+          setStatus(`完成：识别到 ${state.lines.length} 行文字，命中 ${state.detections.length - sus} 处${sus ? `，另有 ${sus} 处疑似待确认` : ""}。点「结果」查看清单。`, 3000);
         }
         if (state.detections.length) openPopover("popResults");
       } catch (e) {
